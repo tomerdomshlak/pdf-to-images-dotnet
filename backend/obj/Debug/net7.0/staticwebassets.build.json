@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "6pSGqUwr8z9VkuGUIYUmsCfkUFFtbNSF0axDD6MKNco=",
+  "Source": "PdfToImages.Api",
+  "BasePath": "_content/PdfToImages.Api",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}
