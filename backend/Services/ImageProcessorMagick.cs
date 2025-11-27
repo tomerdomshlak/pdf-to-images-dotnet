@@ -76,7 +76,7 @@ public sealed class ImageProcessorMagick : IImageProcessor
             var readSettings = new MagickReadSettings
             {
                 // Increase DPI for higher fidelity on text/lines
-                Density = new Density(400, 400),
+                Density = new Density(300, 300),
                 BackgroundColor = MagickColors.White
             };
 
@@ -345,6 +345,20 @@ public sealed class ImageProcessorMagick : IImageProcessor
         // Subtle sharpening to improve crispness of small text without visible halos
         image.UnsharpMask(0, 0.9, 0.9, 0.02);
 
+        // Display-optimized downscale for very large pages
+        // Cap the long-edge to keep files small while remaining crisp on screen
+        var maxLongEdge = 1600; // adjust if you want larger previews
+        if (image.Width > maxLongEdge || image.Height > maxLongEdge)
+        {
+            var scale = image.Width >= image.Height
+                ? (double)maxLongEdge / image.Width
+                : (double)maxLongEdge / image.Height;
+            var targetW = Math.Max(1, (int)Math.Round(image.Width * scale));
+            var targetH = Math.Max(1, (int)Math.Round(image.Height * scale));
+            image.FilterType = FilterType.Lanczos;
+            image.Resize(targetW, targetH);
+        }
+
         // Optional: additional cleanup could be applied here (deskew/denoise) if needed.
 
         // Choose encoding parameters based on target format with size-aware optimization between PNG and JPEG
@@ -385,45 +399,41 @@ public sealed class ImageProcessorMagick : IImageProcessor
             };
         }
 
-        // Default branch: target PNG, but attempt JPEG as well and pick the smaller if it's significantly smaller
-        // Prepare PNG candidate (with palette quantization to shrink file size for document-like pages)
+        // Default branch: try PNG (with palette quantization) and multiple JPEG qualities; pick the smallest
+        // Prepare PNG candidate (palette quantization shrinks size for document-like pages)
         var pngCandidate = image.Clone();
-        if (!sourceIsPdf)
+        var qSettings = new QuantizeSettings
         {
-            var qSettings = new QuantizeSettings
-            {
-                // For non-PDF images we can safely quantize to reduce size
-                Colors = 1024,
-                DitherMethod = DitherMethod.FloydSteinberg
-            };
-            pngCandidate.Quantize(qSettings);
-        }
+            // For PDFs and non-PDFs alike, quantize strongly for display
+            Colors = sourceIsPdf ? 256 : 512,
+            DitherMethod = DitherMethod.FloydSteinberg
+        };
+        pngCandidate.Quantize(qSettings);
         pngCandidate.Format = MagickFormat.Png;
         pngCandidate.Settings.SetDefine(MagickFormat.Png, "compression-level", "9");
         pngCandidate.Settings.SetDefine(MagickFormat.Png, "filter", "5");
         var pngBytes = WriteToBytes(pngCandidate);
 
-        // Prepare JPEG candidate at high quality (visually safe) for photo-like pages
-        var (jpegCandidateBytes, jpegW, jpegH) = EncodeJpeg(image, quality: 95);
-
-        // Heuristic: prefer PNG unless JPEG is notably smaller to avoid text artifacts
-        bool chooseJpeg = jpegCandidateBytes.LongLength < (long)(pngBytes.LongLength * 0.85);
-
-        if (chooseJpeg)
+        // Prepare multiple JPEG candidates and pick the smallest
+        var jpegQualities = sourceIsPdf ? new[] { 85, 80, 75 } : new[] { 90, 85, 80 };
+        byte[] bestJpegBytes = Array.Empty<byte>();
+        int bestJpegW = image.Width;
+        int bestJpegH = image.Height;
+        long bestJpegSize = long.MaxValue;
+        foreach (var q in jpegQualities)
         {
-            var suggestedJpeg = $"{baseName}-page-{index:D3}.jpg";
-            return new ProcessedImage
+            var (bytes, w, h) = EncodeJpeg(image, q);
+            if (bytes.LongLength < bestJpegSize)
             {
-                PageNumber = index,
-                MimeType = "image/jpeg",
-                FileExtension = ".jpg",
-                SuggestedFileName = suggestedJpeg,
-                Width = jpegW,
-                Height = jpegH,
-                Bytes = jpegCandidateBytes
-            };
+                bestJpegBytes = bytes;
+                bestJpegW = w;
+                bestJpegH = h;
+                bestJpegSize = bytes.LongLength;
+            }
         }
-        else
+
+        var choosePng = pngBytes.LongLength <= bestJpegSize;
+        if (choosePng)
         {
             var suggestedPng = $"{baseName}-page-{index:D3}.png";
             return new ProcessedImage
@@ -437,6 +447,18 @@ public sealed class ImageProcessorMagick : IImageProcessor
                 Bytes = pngBytes
             };
         }
+
+        var jpegFileName = $"{baseName}-page-{index:D3}.jpg";
+        return new ProcessedImage
+        {
+            PageNumber = index,
+            MimeType = "image/jpeg",
+            FileExtension = ".jpg",
+            SuggestedFileName = jpegFileName,
+            Width = bestJpegW,
+            Height = bestJpegH,
+            Bytes = bestJpegBytes
+        };
     }
 
     private static MagickFormat GetTargetFormat(string extension, bool isPdf)
@@ -476,7 +498,7 @@ public sealed class ImageProcessorMagick : IImageProcessor
         jpeg.Settings.SetDefine(MagickFormat.Jpeg, "trellis-quantization", "true");
         jpeg.Settings.SetDefine(MagickFormat.Jpeg, "overshoot-deringing", "true");
         // Favor smaller size: progressive + 4:2:0 subsampling
-        jpeg.Interlace = Interlace.Plane;
+        jpeg.Settings.Interlace = Interlace.Plane;
         jpeg.Settings.SetDefine(MagickFormat.Jpeg, "sampling-factor", "2x2,1x1,1x1");
         var bytes = WriteToBytes(jpeg);
         return (bytes, jpeg.Width, jpeg.Height);
