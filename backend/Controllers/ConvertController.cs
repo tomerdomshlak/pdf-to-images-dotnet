@@ -19,7 +19,7 @@ public sealed class ConvertController : ControllerBase
     [HttpPost]
     [RequestSizeLimit(100_000_000)] // 100 MB
     [Consumes("multipart/form-data")]
-    public async Task<ActionResult<BatchConversionResponse>> Post([FromForm] List<IFormFile> files, [FromQuery] ProcessingMode mode = ProcessingMode.Lossless, CancellationToken cancellationToken = default)
+    public async Task<ActionResult<BatchConversionResponse>> Post([FromForm] List<IFormFile> files, CancellationToken cancellationToken = default)
     {
         if (files == null || files.Count == 0)
         {
@@ -33,7 +33,7 @@ public sealed class ConvertController : ControllerBase
 
         foreach (var file in files)
         {
-            var result = await _imageProcessor.ProcessFileAsync(file, mode, cancellationToken);
+            var result = await _imageProcessor.ProcessFileAsync(file, cancellationToken);
             response.Files.Add(result);
         }
 
@@ -43,7 +43,7 @@ public sealed class ConvertController : ControllerBase
     [HttpPost("zip")]
     [RequestSizeLimit(100_000_000)] // 100 MB
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> PostZip([FromForm] List<IFormFile> files, [FromQuery] ProcessingMode mode = ProcessingMode.Lossless, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> PostZip([FromForm] List<IFormFile> files, CancellationToken cancellationToken = default)
     {
         if (files == null || files.Count == 0)
         {
@@ -55,7 +55,7 @@ public sealed class ConvertController : ControllerBase
         {
             foreach (var file in files)
             {
-                var processed = await _imageProcessor.ProcessFileToBlobsAsync(file, mode, cancellationToken);
+                var processed = await _imageProcessor.ProcessFileToBlobsAsync(file, cancellationToken);
                 var baseName = Path.GetFileNameWithoutExtension(processed.OriginalFileName);
 
                 // If only a single page/frame -> put at ZIP root; otherwise use a subfolder

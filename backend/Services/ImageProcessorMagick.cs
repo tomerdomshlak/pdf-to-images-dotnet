@@ -15,9 +15,9 @@ public sealed class ImageProcessorMagick : IImageProcessor
     private static readonly HashSet<string> HeicExtensions = new(StringComparer.OrdinalIgnoreCase) { ".heic", ".heif" };
     private static readonly HashSet<string> BmpExtensions = new(StringComparer.OrdinalIgnoreCase) { ".bmp" };
 
-    public async Task<FileConversionResponse> ProcessFileAsync(IFormFile file, ProcessingMode mode, CancellationToken cancellationToken)
+    public async Task<FileConversionResponse> ProcessFileAsync(IFormFile file, CancellationToken cancellationToken)
     {
-        var processed = await ProcessFileToBlobsAsync(file, mode, cancellationToken);
+        var processed = await ProcessFileToBlobsAsync(file, cancellationToken);
         var fileResponse = new FileConversionResponse { OriginalFileName = processed.OriginalFileName, Pages = new List<ImagePageResponse>() };
         foreach (var page in processed.Pages)
         {
@@ -37,7 +37,7 @@ public sealed class ImageProcessorMagick : IImageProcessor
         return fileResponse;
     }
 
-    public async Task<ProcessedFile> ProcessFileToBlobsAsync(IFormFile file, ProcessingMode mode, CancellationToken cancellationToken)
+    public async Task<ProcessedFile> ProcessFileToBlobsAsync(IFormFile file, CancellationToken cancellationToken)
     {
         var originalName = file.FileName;
         var extension = Path.GetExtension(originalName) ?? string.Empty;
@@ -71,9 +71,9 @@ public sealed class ImageProcessorMagick : IImageProcessor
             foreach (var page in pages)
             {
                 pageIndex++;
-                var blob = mode == ProcessingMode.Lossless
-                    ? EncodeToPngLosslessBlob(page, pageIndex, Path.GetFileNameWithoutExtension(originalName))
-                    : EncodeToTargetBlob(page, targetFormat, pageIndex, Path.GetFileNameWithoutExtension(originalName), /*sourceIsPdf*/ true);
+                // For PDFs, keep the previous visually safe target logic (PNG default),
+                // as comparing against original PDF bytes is not meaningful here.
+                var blob = EncodeToTargetBlob(page, targetFormat, pageIndex, Path.GetFileNameWithoutExtension(originalName), /*sourceIsPdf*/ true);
                 result.Pages.Add(blob);
             }
         }
@@ -87,15 +87,57 @@ public sealed class ImageProcessorMagick : IImageProcessor
             }
 
             var frameIndex = 0;
-            // Lossless path for single-frame common formats
-            if (collection.Count == 1 && mode == ProcessingMode.Lossless)
+            // Single-frame non-PDF: keep original format and ensure result is strictly smaller
+            if (collection.Count == 1)
             {
                 var frame = collection[0];
                 var baseName = Path.GetFileNameWithoutExtension(originalName);
-
+                // JPEG path: quality ramp then downscale ramp
                 if (JpegExtensions.Contains(extension))
                 {
-                    // Return original JPEG bytes to avoid any recompression (lossless guarantee)
+                    foreach (var q in new[] { 90, 85, 80, 75, 70, 65, 60 })
+                    {
+                        var (jpegBytes, jpegWidth, jpegHeight) = EncodeJpeg(frame, q);
+                        if (jpegBytes.LongLength < (long)originalBytes.LongLength)
+                        {
+                            result.Pages.Add(new ProcessedImage
+                            {
+                                PageNumber = 1,
+                                MimeType = "image/jpeg",
+                                FileExtension = ".jpg",
+                                SuggestedFileName = $"{baseName}-page-001.jpg",
+                                Width = jpegWidth,
+                                Height = jpegHeight,
+                                Bytes = jpegBytes
+                            });
+                            return result;
+                        }
+                    }
+                    foreach (var pct in new[] { 95, 90, 85, 80, 75 })
+                    {
+                        using var resized = frame.Clone();
+                        resized.FilterType = FilterType.Lanczos;
+                        resized.Resize(new Percentage(pct));
+                        foreach (var q in new[] { 85, 80, 75, 70, 65 })
+                        {
+                            var (jpegBytes, jpegWidth, jpegHeight) = EncodeJpeg(resized, q);
+                            if (jpegBytes.LongLength < (long)originalBytes.LongLength)
+                            {
+                                result.Pages.Add(new ProcessedImage
+                                {
+                                    PageNumber = 1,
+                                    MimeType = "image/jpeg",
+                                    FileExtension = ".jpg",
+                                    SuggestedFileName = $"{baseName}-page-001.jpg",
+                                    Width = jpegWidth,
+                                    Height = jpegHeight,
+                                    Bytes = jpegBytes
+                                });
+                                return result;
+                            }
+                        }
+                    }
+                    // Fallback: keep original but still preserve format; should be rare if above loops tried
                     result.Pages.Add(new ProcessedImage
                     {
                         PageNumber = 1,
@@ -109,9 +151,136 @@ public sealed class ImageProcessorMagick : IImageProcessor
                     return result;
                 }
 
+                // PNG path: quantize then downscale + quantize; always keep PNG
+                if (PngExtensions.Contains(extension))
+                {
+                    foreach (var colors in new[] { 256, 128, 64 })
+                    {
+                        var pngCandidate = frame.Clone();
+                        var qSettings = new QuantizeSettings
+                        {
+                            Colors = colors,
+                            DitherMethod = DitherMethod.FloydSteinberg
+                        };
+                        pngCandidate.Quantize(qSettings);
+                        pngCandidate.Format = MagickFormat.Png;
+                        pngCandidate.Settings.SetDefine(MagickFormat.Png, "compression-level", "9");
+                        pngCandidate.Settings.SetDefine(MagickFormat.Png, "filter", "5");
+                        var pngBytes = WriteToBytes(pngCandidate);
+                        if (pngBytes.LongLength < (long)originalBytes.LongLength)
+                        {
+                            result.Pages.Add(new ProcessedImage
+                            {
+                                PageNumber = 1,
+                                MimeType = "image/png",
+                                FileExtension = ".png",
+                                SuggestedFileName = $"{baseName}-page-001.png",
+                                Width = pngCandidate.Width,
+                                Height = pngCandidate.Height,
+                                Bytes = pngBytes
+                            });
+                            return result;
+                        }
+                    }
+                    foreach (var pct in new[] { 95, 90, 85, 80, 75 })
+                    {
+                        using var resized = frame.Clone();
+                        resized.FilterType = FilterType.Lanczos;
+                        resized.Resize(new Percentage(pct));
+                        var pngCandidate = resized.Clone();
+                        var qSettings = new QuantizeSettings
+                        {
+                            Colors = 256,
+                            DitherMethod = DitherMethod.FloydSteinberg
+                        };
+                        pngCandidate.Quantize(qSettings);
+                        pngCandidate.Format = MagickFormat.Png;
+                        pngCandidate.Settings.SetDefine(MagickFormat.Png, "compression-level", "9");
+                        pngCandidate.Settings.SetDefine(MagickFormat.Png, "filter", "5");
+                        var pngBytes = WriteToBytes(pngCandidate);
+                        if (pngBytes.LongLength < (long)originalBytes.LongLength)
+                        {
+                            result.Pages.Add(new ProcessedImage
+                            {
+                                PageNumber = 1,
+                                MimeType = "image/png",
+                                FileExtension = ".png",
+                                SuggestedFileName = $"{baseName}-page-001.png",
+                                Width = pngCandidate.Width,
+                                Height = pngCandidate.Height,
+                                Bytes = pngBytes
+                            });
+                            return result;
+                        }
+                    }
+                    result.Pages.Add(new ProcessedImage
+                    {
+                        PageNumber = 1,
+                        MimeType = "image/png",
+                        FileExtension = ".png",
+                        SuggestedFileName = $"{baseName}-page-001.png",
+                        Width = frame.Width,
+                        Height = frame.Height,
+                        Bytes = originalBytes
+                    });
+                    return result;
+                }
+
+                // WEBP path: keep WEBP if original was WEBP; quality ramp then downscale
                 if (WebpExtensions.Contains(extension))
                 {
-                    // Keep original WEBP bytes (could be lossless or lossy originally, but we don't degrade further)
+                    foreach (var q in new[] { 90, 85, 80, 75, 70, 65, 60 })
+                    {
+                        using var webp = frame.Clone();
+                        webp.Format = MagickFormat.WebP;
+                        webp.Quality = q;
+                        webp.Settings.SetDefine(MagickFormat.WebP, "method", "6");
+                        webp.Settings.SetDefine(MagickFormat.WebP, "auto-filter", "true");
+                        var webpBytes = WriteToBytes(webp);
+                        if (webpBytes.LongLength < (long)originalBytes.LongLength)
+                        {
+                            result.Pages.Add(new ProcessedImage
+                            {
+                                PageNumber = 1,
+                                MimeType = "image/webp",
+                                FileExtension = ".webp",
+                                SuggestedFileName = $"{baseName}-page-001.webp",
+                                Width = webp.Width,
+                                Height = webp.Height,
+                                Bytes = webpBytes
+                            });
+                            return result;
+                        }
+                    }
+                    foreach (var pct in new[] { 95, 90, 85, 80, 75 })
+                    {
+                        using var resized = frame.Clone();
+                        resized.FilterType = FilterType.Lanczos;
+                        resized.Resize(new Percentage(pct));
+                        foreach (var q in new[] { 85, 80, 75, 70, 65 })
+                        {
+                            using var webp = resized.Clone();
+                            webp.Format = MagickFormat.WebP;
+                            webp.Quality = q;
+                            webp.Settings.SetDefine(MagickFormat.WebP, "method", "6");
+                            webp.Settings.SetDefine(MagickFormat.WebP, "auto-filter", "true");
+                            var webpBytes = WriteToBytes(webp);
+                            if (webpBytes.LongLength < (long)originalBytes.LongLength)
+                            {
+                                result.Pages.Add(new ProcessedImage
+                                {
+                                    PageNumber = 1,
+                                    MimeType = "image/webp",
+                                    FileExtension = ".webp",
+                                    SuggestedFileName = $"{baseName}-page-001.webp",
+                                    Width = webp.Width,
+                                    Height = webp.Height,
+                                    Bytes = webpBytes
+                                });
+                                return result;
+                            }
+                        }
+                    }
                     result.Pages.Add(new ProcessedImage
                     {
                         PageNumber = 1,
@@ -125,36 +294,16 @@ public sealed class ImageProcessorMagick : IImageProcessor
                     return result;
                 }
 
-                if (PngExtensions.Contains(extension))
-                {
-                    // Repack PNG losslessly and pick the smaller of original vs repacked
-                    var repacked = frame.Clone();
-                    repacked.Format = MagickFormat.Png;
-                    repacked.Settings.SetDefine(MagickFormat.Png, "compression-level", "9");
-                    repacked.Settings.SetDefine(MagickFormat.Png, "filter", "5");
-                    var repackedBytes = WriteToBytes(repacked);
-                    var chosen = repackedBytes.LongLength < (long)originalBytes.LongLength ? repackedBytes : originalBytes;
-
-                    result.Pages.Add(new ProcessedImage
-                    {
-                        PageNumber = 1,
-                        MimeType = "image/png",
-                        FileExtension = ".png",
-                        SuggestedFileName = $"{baseName}-page-001.png",
-                        Width = frame.Width,
-                        Height = frame.Height,
-                        Bytes = chosen
-                    });
-                    return result;
-                }
+                // Other formats: fall back to previous heuristic (EncodeToTargetBlob) to maintain preview compatibility
+                var fallbackBlob = EncodeToTargetBlob(frame, targetFormat, 1, baseName, /*sourceIsPdf*/ false);
+                result.Pages.Add(fallbackBlob);
+                return result;
             }
 
             foreach (var frame in collection)
             {
                 frameIndex++;
-                var blob = mode == ProcessingMode.Lossless
-                    ? EncodeToPngLosslessBlob(frame, frameIndex, Path.GetFileNameWithoutExtension(originalName))
-                    : EncodeToTargetBlob(frame, targetFormat, frameIndex, Path.GetFileNameWithoutExtension(originalName), /*sourceIsPdf*/ false);
+                var blob = EncodeToTargetBlob(frame, targetFormat, frameIndex, Path.GetFileNameWithoutExtension(originalName), /*sourceIsPdf*/ false);
                 result.Pages.Add(blob);
             }
         }
@@ -306,12 +455,13 @@ public sealed class ImageProcessorMagick : IImageProcessor
     {
         using var jpeg = src.Clone();
         jpeg.Format = MagickFormat.Jpeg;
-        jpeg.Quality = quality; // 85-92 usually safe
+        jpeg.Quality = quality;
         jpeg.Settings.SetDefine(MagickFormat.Jpeg, "optimize-coding", "true");
         jpeg.Settings.SetDefine(MagickFormat.Jpeg, "trellis-quantization", "true");
         jpeg.Settings.SetDefine(MagickFormat.Jpeg, "overshoot-deringing", "true");
-        // Use 4:4:4 subsampling for crisper small text and edges (larger file, better detail)
-        jpeg.Settings.SetDefine(MagickFormat.Jpeg, "sampling-factor", "4:4:4");
+        // Favor smaller size: progressive + 4:2:0 subsampling
+        jpeg.Interlace = Interlace.Plane;
+        jpeg.Settings.SetDefine(MagickFormat.Jpeg, "sampling-factor", "2x2,1x1,1x1");
         var bytes = WriteToBytes(jpeg);
         return (bytes, jpeg.Width, jpeg.Height);
     }

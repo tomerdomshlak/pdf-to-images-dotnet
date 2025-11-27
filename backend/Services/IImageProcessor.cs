@@ -5,8 +5,8 @@ namespace PdfToImages.Api.Services;
 
 public interface IImageProcessor
 {
-    Task<FileConversionResponse> ProcessFileAsync(IFormFile file, ProcessingMode mode, CancellationToken cancellationToken);
-    Task<ProcessedFile> ProcessFileToBlobsAsync(IFormFile file, ProcessingMode mode, CancellationToken cancellationToken);
+    Task<FileConversionResponse> ProcessFileAsync(IFormFile file, CancellationToken cancellationToken);
+    Task<ProcessedFile> ProcessFileToBlobsAsync(IFormFile file, CancellationToken cancellationToken);
 }
 
 

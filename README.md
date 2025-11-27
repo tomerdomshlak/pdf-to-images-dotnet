@@ -1,12 +1,12 @@
 ## PDF/Image to Images (React + ASP.NET Core)
-
+[
 Two local apps:
 - **Backend**: ASP.NET Core Web API (.NET 7) converts PDFs to images and compresses images using Magick.NET.
 - **Frontend**: React (Vite) uploads multiple files and previews returned images.
 
 The backend returns images as base64 data URLs and the frontend displays them as page previews.
 
-### Features
+]()### Features
 - Upload multiple PDFs and/or images
 - PDFs rendered page-by-page at 300 DPI for crisp invoice-like documents
 - Images compressed to WebP with tuned settings to preserve quality while reducing size

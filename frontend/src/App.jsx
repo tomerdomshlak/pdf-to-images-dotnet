@@ -8,7 +8,6 @@ export default function App() {
   const [isDownloading, setIsDownloading] = useState(false)
   const [results, setResults] = useState([])
   const [error, setError] = useState(null)
-  const [mode, setMode] = useState('lossless') // 'lossless' | 'auto'
 
   const apiBaseUrl = useMemo(() => {
     return import.meta.env.VITE_API_BASE_URL || DEFAULT_API
@@ -31,7 +30,7 @@ export default function App() {
         form.append('files', f, f.name)
       }
 
-      const res = await fetch(`${apiBaseUrl}/api/convert?mode=${encodeURIComponent(mode)}`, {
+      const res = await fetch(`${apiBaseUrl}/api/convert`, {
         method: 'POST',
         body: form
       })
@@ -60,7 +59,7 @@ export default function App() {
       for (const f of selectedFiles) {
         form.append('files', f, f.name)
       }
-      const res = await fetch(`${apiBaseUrl}/api/convert/zip?mode=${encodeURIComponent(mode)}`, {
+      const res = await fetch(`${apiBaseUrl}/api/convert/zip`, {
         method: 'POST',
         body: form
       })
@@ -94,10 +93,6 @@ export default function App() {
           accept=".pdf,image/*"
           onChange={onFilesChanged}
         />
-        <select value={mode} onChange={(e) => setMode(e.target.value)}>
-          <option value="lossless">Lossless (no quality loss)</option>
-          <option value="auto">Auto (smaller, visually safe)</option>
-        </select>
         <button type="submit" disabled={isUploading || selectedFiles.length === 0}>
           {isUploading ? 'Processing…' : 'Upload & Convert'}
         </button>
