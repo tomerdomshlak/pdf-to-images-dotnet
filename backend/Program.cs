@@ -17,6 +17,7 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.AddSingleton<PdfToImages.Api.Services.Ocr.IOcrService, PdfToImages.Api.Services.Ocr.TesseractCliOcrService>();
 builder.Services.AddSingleton<IImageProcessor, ImageProcessorMagick>();
 
 var app = builder.Build();

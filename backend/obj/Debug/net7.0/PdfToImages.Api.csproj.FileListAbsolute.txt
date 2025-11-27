@@ -38,3 +38,8 @@
 /Users/tomerdomshlak/code-kings/workspaces/internal/pdf-to-images-dotnet/backend/obj/Debug/net7.0/PdfToImages.Api.pdb
 /Users/tomerdomshlak/code-kings/workspaces/internal/pdf-to-images-dotnet/backend/obj/Debug/net7.0/PdfToImages.Api.genruntimeconfig.cache
 /Users/tomerdomshlak/code-kings/workspaces/internal/pdf-to-images-dotnet/backend/obj/Debug/net7.0/ref/PdfToImages.Api.dll
+/Users/tomerdomshlak/code-kings/workspaces/internal/pdf-to-images-dotnet/backend/bin/Debug/net7.0/x86/leptonica-1.80.0.dll
+/Users/tomerdomshlak/code-kings/workspaces/internal/pdf-to-images-dotnet/backend/bin/Debug/net7.0/x86/tesseract41.dll
+/Users/tomerdomshlak/code-kings/workspaces/internal/pdf-to-images-dotnet/backend/bin/Debug/net7.0/x64/leptonica-1.80.0.dll
+/Users/tomerdomshlak/code-kings/workspaces/internal/pdf-to-images-dotnet/backend/bin/Debug/net7.0/x64/tesseract41.dll
+/Users/tomerdomshlak/code-kings/workspaces/internal/pdf-to-images-dotnet/backend/bin/Debug/net7.0/Tesseract.dll

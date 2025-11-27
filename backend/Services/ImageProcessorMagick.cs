@@ -1,11 +1,13 @@
 using ImageMagick;
 using Microsoft.AspNetCore.Http;
 using PdfToImages.Api.Models;
+using PdfToImages.Api.Services.Ocr;
 
 namespace PdfToImages.Api.Services;
 
 public sealed class ImageProcessorMagick : IImageProcessor
 {
+    private readonly IOcrService _ocrService;
     private static readonly HashSet<string> PdfExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf" };
     private static readonly HashSet<string> JpegExtensions = new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg" };
     private static readonly HashSet<string> PngExtensions = new(StringComparer.OrdinalIgnoreCase) { ".png" };
@@ -15,6 +17,11 @@ public sealed class ImageProcessorMagick : IImageProcessor
     private static readonly HashSet<string> HeicExtensions = new(StringComparer.OrdinalIgnoreCase) { ".heic", ".heif" };
     private static readonly HashSet<string> BmpExtensions = new(StringComparer.OrdinalIgnoreCase) { ".bmp" };
 
+    public ImageProcessorMagick(IOcrService ocrService)
+    {
+        _ocrService = ocrService;
+    }
+
     public async Task<FileConversionResponse> ProcessFileAsync(IFormFile file, CancellationToken cancellationToken)
     {
         var processed = await ProcessFileToBlobsAsync(file, cancellationToken);
@@ -23,7 +30,7 @@ public sealed class ImageProcessorMagick : IImageProcessor
         {
             var base64 = Convert.ToBase64String(page.Bytes);
             var dataUrl = $"data:{page.MimeType};base64,{base64}";
-            fileResponse.Pages.Add(new ImagePageResponse
+            var responsePage = new ImagePageResponse
             {
                 PageNumber = page.PageNumber,
                 MimeType = page.MimeType,
@@ -31,7 +38,16 @@ public sealed class ImageProcessorMagick : IImageProcessor
                 Width = page.Width,
                 Height = page.Height,
                 SizeBytes = page.Bytes.LongLength
-            });
+            };
+            try
+            {
+                responsePage.Ocr = await _ocrService.ExtractAsync(page.Bytes, cancellationToken);
+            }
+            catch
+            {
+                responsePage.Ocr = null;
+            }
+            fileResponse.Pages.Add(responsePage);
         }
 
         return fileResponse;
